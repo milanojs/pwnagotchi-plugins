@@ -125,14 +125,10 @@ class UPS:
 
 class UPSLite(plugins.Plugin):
   __GitHub__ = ""
-    __author__ = 'pwnagotchi contributor, based on evilsocket@gmail.com'
-    __author__ = "(edited by: Juan Milano juan_milano@hotmail.com"
+    __author__ = "pwnagotchi contributor, based on evilsocket@gmail.com, (edited by: Juan Milano juan_milano@hotmail.com"
     __version__ = '1.0.2' # Incremented version
-    __version__ = "1.0.0"
-    __license__ = 'GPL3'
     __license__ = "GPL3"
-    __description__ = 'A plugin that displays battery capacity and charging status for the UPS Lite v1.3 using CW20150 .'
-    __description__ = "A plugin that will add a voltage indicator for the UPS Lite v1.3"
+    __description__ = 'A plugin that displays battery capacity and charging status for the UPS Lite v1.3 using CW20150, A plugin that will add a voltage indicator for the UPS Lite v1.3"
     __name__ = "UPSLite"
     __help__ = "A plugin that will add a voltage indicator for the UPS Lite v1.3 designed by xiaoj"
     __dependencies__ = {
@@ -141,7 +137,6 @@ class UPSLite(plugins.Plugin):
     __defaults__ = {
         "enabled": False,
     }
-
 
 
 
@@ -181,16 +176,51 @@ class UPSLite(plugins.Plugin):
 
 
     def on_ui_update(self, ui):
-        if self.ups: # Check if UPS object was initialized successfully
-            try:
-                capacity = self.ups.capacity()
-                charging = self.ups.charging()
-                # Format to integer percentage
-                ui.set('ups', "%2i%%%s" % (int(round(capacity)), charging))
-            except Exception as e:
-                log.error("UPSLite: Error during UI update: %s", e)
-                # Optionally set UI to an error state
-                # ui.set('ups', "ERR")
-        else:
-            # If UPS object failed to init, display error or default
-             ui.set('ups', "--")
+        # Add the top-level try-except block
+        try:
+            if self.ups:
+                # Inner try-except for specific UPS/shutdown logic errors remains
+                try:
+                    capacity = self.ups.capacity()
+                    charging = self.ups.charging()
+                    capacity_int = int(round(capacity))
+
+                    # Set UI based on current readings
+                    ui.set('ups', "%2i%%%s" % (capacity_int, charging))
+
+                    # Check for shutdown condition ONLY if not charging
+                    if charging != '+':
+                        if capacity_int <= self.shutdown_threshold:
+                            log.warning('[UPSLite] Low battery (%.1f%% <= %d%%) and not charging: shutting down!', capacity, self.shutdown_threshold)
+                            # Try to update UI status before shutting down
+                            try:
+                                ui.set('ups', "%2i%%%s" % (capacity_int, charging)) # Update UI one last time
+                                ui.update(force=True, new_data={'status': 'Battery low (%d%%), shutting down...' % capacity_int})
+                                time.sleep(2) # Give UI a moment
+                            except Exception as ui_e:
+                                log.error("UPSLite: Failed to update UI before shutdown: %s", ui_e)
+                            # Proceed with shutdown regardless of UI update success
+                            pwnagotchi.shutdown()
+
+                except Exception as e_inner:
+                    # Log errors specifically from UPS interaction or shutdown check
+                    log.error("UPSLite: Error during UPS read/shutdown logic: %s", e_inner, exc_info=True)
+                    # Attempt to set UI to ERR state only if the error wasn't during shutdown itself
+                    # (No easy way to check that perfectly, just try setting UI)
+                    try:
+                        ui.set('ups', "ERR")
+                    except Exception as e_ui_inner:
+                        log.error("UPSLite: Failed to set UI to ERR state after inner error: %s", e_ui_inner)
+
+            else: # self.ups is None (initialization failed)
+                 try:
+                     ui.set('ups', "--")
+                 except Exception as e_ui_else:
+                     log.error("UPSLite: Failed to set UI to default '--' state: %s", e_ui_else)
+
+        except Exception as e_outer:
+            # Catch ANY unexpected error within the entire on_ui_update method
+            log.error("UPSLite: Unhandled exception in on_ui_update: %s", e_outer, exc_info=True)
+            # It's often safer *not* to try and update the UI here,
+            # as the UI object itself or the framework might be involved in the error.
+            # Just log the error and let the next update cycle try again.
